@@ -1,0 +1,82 @@
+- name: GeoNode Installation
+  hosts: localhost
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Gather architecture and distribution release facts
+      setup:
+
+    - name: Add user to the Docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Add new user
+      user:
+        name: geonode
+        create_home: yes
+
+    - name: Add geonode user to sudo group
+      user:
+        name: geonode
+        groups: sudo
+        append: yes
+
+    - name: Make folder for the GeoNode project
+      file:
+        path: /opt/geonode_custom/
+        state: directory
+
+    - name: Set permissions for GeoNode project folder
+      file:
+        path: /opt/geonode_custom/
+        owner: geonode
+        group: www-data
+        mode: "0775"
+
+    - name: Add safe directory exception for Git
+      ansible.builtin.shell: git config --global --add safe.directory /opt/geonode_custom/geonode-project
+
+    - name: Clone GeoNode project repository
+      git:
+        repo: https://github.com/GeoNode/geonode-project.git
+        dest: /opt/geonode_custom/geonode-project
+        version: "{{ version }}"
+        clone: yes
+
+    - name: Activate virtualenvwrapper and create virtual environment
+      ansible.builtin.shell: |
+        source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
+        mkvirtualenv --python=/usr/bin/python3 my_geonode
+      args:
+        executable: /usr/bin/bash
+
+    - name: Install Django and start project from template in the virtual environment
+      ansible.builtin.shell: |
+        source /usr/share/virtualenvwrapper/virtualenvwrapper.sh
+        workon my_geonode
+        pip install --upgrade pip
+        pip install Django==3.2.13
+        django-admin startproject --template=./geonode-project -e py,sh,md,rst,json,yml,ini,env,sample,properties -n monitoring-cron -n Dockerfile my_geonode
+      args:
+        executable: /usr/bin/bash
+        chdir: /opt/geonode_custom
+
+    - name: Run create-envfile.py script
+      ansible.builtin.shell: python3 create-envfile.py --noinput
+      args:
+        executable: /usr/bin/bash
+        chdir: /opt/geonode_custom/my_geonode
+
+    - name: Build Docker containers
+      ansible.builtin.shell: docker-compose -f docker-compose.yml build --no-cache
+      args:
+        chdir: /opt/geonode_custom/my_geonode
+
+    - name: Run docker-compose up -d
+      ansible.builtin.shell: docker-compose -f docker-compose.yml up -d
+      args:
+        chdir: /opt/geonode_custom/my_geonode
+
